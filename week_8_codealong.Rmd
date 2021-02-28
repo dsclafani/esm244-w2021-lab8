@@ -1,0 +1,213 @@
+---
+title: "week_8_lab"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(here)
+library(janitor)
+library(palmerpenguins)
+library(palmerpenguins)
+
+#packages for cluster analysis
+library(NbClust)
+library(cluster)
+library(factoextra)
+library(dendextend)
+library(ggdendro)
+```
+
+
+### Intro to cluster analysis (k-means, hierarchical)
+
+#### Part 1. K-means clustering
+#### exploratory visualization
+```{r}
+#graph penguin data by species point color, does it look like their is an opportunity to cluster?
+
+
+#bill length vs bill depth
+ggplot(penguins) +
+  geom_point(aes(x = bill_length_mm,
+                 y = bill_depth_mm,
+                 color = species,
+                 shape = sex),
+             size = 3,
+             alpha = 0.7)+
+  scale_color_manual(values = c("orange", "cyan4", "darkmagenta"))
+
+```
+
+```{r}
+#flipper length vs body mass
+ggplot(penguins) +
+  geom_point(aes(x = flipper_length_mm,
+                 y = body_mass_g,
+                 color = species,
+                 shape = sex),
+             size = 3,
+             alpha = 0.7)+
+  scale_color_manual(values = c("orange", "cyan4", "darkmagenta"))
+```
+
+
+```{r}
+#asking R how many clusters there should be
+number_est <- NbClust(penguins[3:6], min.nc = 10, method = "kmeans")
+
+# looking at results
+number_est
+```
+
+#create a complete, scaled version of the data
+We're still going to use 3 clusters and see how it does, though there may be a case here for 2 given that Adelie & chinstrap penguins are pretty similar. 
+We are going to do this with *complete cases* - in other words, for the variables we're using to perform k-means clustering on penguins (bill length, bill depth, flipper length, body mass), we are *dropping any observation (row) where any of those are missing*. Keep in mind that this may not be the best option for every scenario - in other cases (e.g. when we have a large proportion of missingness), we may want to impute missing values instead.
+
+```{r}
+#drop roaws where any of the four size measurements are missing
+penguins_complete <- penguins %>% 
+  drop_na(bill_depth_mm, flipper_length_mm, body_mass_g, bill_length_mm)
+
+#only keep columns with the four size measurements of interest, then scale them
+penguins_scale <- penguins_complete %>% 
+  select(ends_with("mm"), body_mass_g) %>% 
+  scale()
+```
+
+
+## Running K-means
+Now that we have complete, scaled data for the four size variables of interest, let's run k-means. You should know the iterative process it's running through from the Week 8 lecture.  
+```{r}
+penguins_km <- kmeans(penguins_scale, 3) #kmeans specificying starting with 3 groups/clusters
+```
+
+
+```{r}
+# see what it returns (different elements returned by means function):
+penguins_km$size #gives us the size of each cluster
+
+penguins_km$cluster #what cluster each observation in penguin_scale is assigned to
+
+#bind the cluster number to the original data used for clustering, so that we can see what clister each penguin is assigned to
+penguins_cl <- data.frame(penguins_complete, cluster_no = factor(penguins_km$cluster))
+
+#plot flipper length vs body mass, indicating which cluster each penguins is assigned to (but also showing the actual species)
+
+ggplot(data = penguins_cl)+
+  geom_point(aes(x = flipper_length_mm,
+             y = body_mass_g,
+             color = cluster_no,
+             shape = species))
+```
+
+```{r}
+ggplot(data = penguins_cl)+
+  geom_point(aes(x = bill_length_mm,
+             y = bill_depth_mm,
+             color = cluster_no,
+             shape = species))
+```
+
+###finding counts of how many of each species are in each cluster
+```{r}
+#Find the counts of each species assigned to each cluster, then pivot_wider() to make it a contingency table:
+
+penguins_cl %>% 
+  count(species, cluster_no) %>% 
+  pivot_wider(names_from = cluster_no, values_from = n) %>% 
+  rename('Cluster 1' = '1', 'Cluster 2' = '2', 'Cluster 3' = '3')
+```
+
+### Part 2. Cluster Analysis: hierarchical
+In this section, you'll be performing hierarchical cluster analysis (& making dendrograms) in R. You should have already watched the Week 8 lecture to understand agglomerative versus divisive clustering, as well as differences in linkages (complete, single, average). 
+
+We will use the `stats::hclust()` function for agglomerative hierarchical clustering, using WorldBank environmental data (simplified), wb_env.csv.
+
+
+#### reading in data and wrangling
+```{r}
+wb_env <-read.csv("wb_env.csv")
+
+#keeping the world's top 20 GHG emitters
+wb_ghg_20 <- wb_env %>% 
+  arrange(-ghg) %>% 
+  head(20)
+
+#scale data
+wb_scaled <- wb_ghg_20 %>% 
+  select(3:7) %>% 
+  scale()
+
+#adding back in the country names as row names, not a country name column
+rownames(wb_scaled) <- wb_ghg_20$name
+```
+
+
+
+### finding the Euclidean distance
+Use the `stats::dist()` function to find the Euclidean distance in multivariate space between the different observations (countries):
+```{r}
+#compute dissimilarity values (euclidean distance)
+euc_distance <- dist(wb_scaled, method = "euclidean")
+
+#view(euc_distance)
+
+```
+
+### Perform hierarchical clustering by complete linkage
+
+The `stats::hclust()` function performs hierarchical clustering, given a dissimilarity matrix (our matrix of euclidean distances), using a linkage that you specify. 
+
+Here, let's use complete linkage (recall from lecture: clusters are merged by the smallest *maximum* distance between two observations in distinct clusters).
+```{r}
+#hierarchical clustering with complete linkage
+hc_complete <- hclust(euc_distance, method = "complete")
+
+plot(hc_complete, cex = 0.6, hang = -1)
+```
+
+
+
+### making a single dendogram
+```{r}
+hc_single <- hclust(euc_distance, method = "single")
+
+plot(hc_single, cex = 0.6, hang = -1)
+```
+
+
+### Making a tanglegram to compare the two dendrograms
+
+Let's make a **tanglegram** to compare clustering by complete and single linkage! We'll use the `dendextend::tanglegram()` function to make it. 
+
+First, we'll convert to class `dendrogram`, then combine them into a list:
+```{r}
+#convert class to dendrogram
+dend_complete <- as.dendrogram(hc_complete)
+
+dend_single <- as.dendrogram(hc_single)
+```
+
+##### make a tanglegram
+```{r}
+tanglegram(dend_complete, dend_single)
+```
+
+### plotting tanglegram with ggplot
+
+Here's how you can make your dendrogram with `ggplot` (here, I'll use the complete linkage example stored as `hc_complete`) using `ggdendrogram()`, a `ggplot` wrapper: 
+
+```{r}
+ggdendrogram(hc_complete,
+             rotate = TRUE)+
+  theme_minimal()+
+  labs(x = "Country")
+```
+
+
+
+
+
+
